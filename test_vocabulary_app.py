@@ -2,7 +2,7 @@
 import unittest
 import tempfile
 import os
-from vocabulary_app_with_reading import VocabularyDatabase
+from main_code_voc import VocabularyDatabase
 
 
 class TestVocabularyDatabase(unittest.TestCase):
