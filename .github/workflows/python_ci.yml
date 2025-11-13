@@ -1,6 +1,5 @@
 name: Python CI Build
 
-# 1. Trigger: Löst den Workflow bei jedem Push auf 'main' oder 'develop' aus
 on:
   push:
     branches: [ "main", "develop" ]
@@ -8,41 +7,28 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# 2. Definition des Build-Jobs
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-
-    # 3. Test-Matrix für verschiedene Python-Versionen
     strategy:
       matrix:
-        # Führt den Job parallel für Python 3.9, 3.10 und 3.11 aus
         python-version: ["3.9", "3.10", "3.11"]
-
+    
     steps:
     - name: ⬇️ Checkout Code
-      # Holt den Code aus dem Repository auf den Runner
       uses: actions/checkout@v4
-
+    
     - name: ⚙️ Setup Python ${{ matrix.python-version }}
-      # Stellt die gewünschte Python-Version bereit
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'pip' # Aktiviert den Caching für pip-Abhängigkeiten
-
+        cache: 'pip'
+    
     - name: 📦 Install Dependencies
-      # Installiert die Abhängigkeiten. Annahme: Du nutzt eine requirements.txt
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # Zusätzliche Schritte, z.B. zum Installieren von Test-Frameworks:
-        # pip install pytest pytest-cov
-
+    
     - name: ✅ Run Tests
-      # Führt deine Tests aus. Passe den Befehl an dein Test-Framework an (z.B. pytest, unittest)
       run: |
-        # Beispiel für Pytest:
-        pytest
-        # Beispiel für Unittest:
-        # python -m unittest discover
+        pytest test_vocabulary_app.py -v
