@@ -1,7 +1,5 @@
 # 📚 VocabEase: Your Simple English Vocabulary Trainer
 
-!
-
 A simple, effective, and user-friendly application designed to help you master new English vocabulary through customized quizzes, text uploads, and easy data management. Perfect for students and self-learners!
 
 ---
