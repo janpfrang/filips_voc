@@ -35,6 +35,29 @@ from email.mime.multipart import MIMEMultipart
 from typing import Tuple, List, Optional, Callable, Dict
 import re
 import csv
+import unicodedata
+
+
+def normalize_text(text: str) -> str:
+    """
+    Normalisiert Text auf Unicode NFC (REQ-NF-07).
+
+    Text, der über die Sonderzeichen-Buttons eingefügt wird, und Text, der
+    direkt getippt oder eingefügt wird, können unterschiedliche, aber optisch
+    identische Unicode-Repräsentationen ergeben (z.B. vorkomponiertes 'é' vs.
+    'e' + Akzent als eigenes Zeichen). Ohne Normalisierung könnten zwei
+    optisch gleiche Wörter als unterschiedlich gelten (Quiz-Auswertung,
+    Suche, Doublet-Erkennung). NFC wird sowohl beim Speichern (VocabularyDatabase)
+    als auch beim Vergleich frisch eingegebenen Textes (Quiz-Antwort, Suche)
+    angewendet.
+
+    Args:
+        text: Eingabetext
+
+    Returns:
+        NFC-normalisierter Text
+    """
+    return unicodedata.normalize('NFC', text)
 
 
 # ============================================================================
@@ -234,8 +257,8 @@ class VocabularyDatabase:
         entry = {
             'id': self._generate_vocab_id(language),
             'language': language,
-            'foreign_word': foreign_word,
-            'german': german,
+            'foreign_word': normalize_text(foreign_word),  # REQ-NF-07
+            'german': normalize_text(german),
             'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'last_queried': None,
             'last_result': None,
@@ -263,9 +286,9 @@ class VocabularyDatabase:
         for entry in self.vocabulary:
             if entry['id'] == entry_id:
                 if foreign_word is not None:
-                    entry['foreign_word'] = foreign_word
+                    entry['foreign_word'] = normalize_text(foreign_word)  # REQ-NF-07
                 if german is not None:
-                    entry['german'] = german
+                    entry['german'] = normalize_text(german)
                 return self.save()
         return False, "Entry not found"
 
@@ -886,6 +909,95 @@ class EmailModule:
 
 
 # ============================================================================
+# UI WIDGET: SPECIAL CHARACTER BAR (v1.1)
+# ============================================================================
+class SpecialCharacterBar:
+    """
+    Wiederverwendbares Button-Reihe-Widget für Sonderzeichen, die auf einer
+    deutschen Tastatur nicht direkt erreichbar sind (REQ-SPCHAR-01–04).
+
+    Aktuell nur für Spanisch befüllt (á é í ó ú ñ Ñ ¿ ¡ — 'ü' ist auf einer
+    deutschen Tastatur bereits vorhanden und daher ausgenommen). Der Aufbau
+    ist bewusst sprachparametrisiert, damit eine dritte Sprache später
+    einfach eine weitere CHARACTERS-Liste ergänzen kann, statt ein neues
+    Widget zu bauen.
+
+    Ein Klick fügt das Zeichen an der aktuellen Cursor-Position des zuletzt
+    fokussierten registrierten Ziel-Entry ein (REQ-SPCHAR-03). Mehrere Ziele
+    können registriert werden (z.B. das "Add"- und das "Modify"-Feld), das
+    Widget merkt sich per Fokus-Tracking, welches davon aktuell gemeint ist.
+
+    PUBLIC API:
+    ===========
+    - grid(**kwargs) → None                 (initiale Platzierung)
+    - show() / hide() → None                 (REQ-SPCHAR-01/04)
+    - register_target(entry: tk.Entry) → None
+    """
+
+    CHARACTERS = {
+        'spanish': ['á', 'é', 'í', 'ó', 'ú', 'ñ', 'Ñ', '¿', '¡'],
+    }
+
+    def __init__(self, parent: tk.Widget, language: str = 'spanish'):
+        """
+        Baut die Buttonreihe für die angegebene Sprache.
+
+        Args:
+            parent: Parent-Widget
+            language: Sprache, deren Sonderzeichen angezeigt werden (aktuell nur 'spanish')
+        """
+        self.frame = ttk.Frame(parent)
+        for char in self.CHARACTERS.get(language, []):
+            ttk.Button(self.frame, text=char, width=2,
+                      command=lambda c=char: self._insert_character(c)).pack(side=tk.LEFT, padx=1)
+
+        self._targets: List[tk.Entry] = []
+        self._active_target: Optional[tk.Entry] = None
+        self._grid_kwargs: Optional[Dict] = None
+
+    # === PUBLIC API ===
+
+    def grid(self, **kwargs) -> None:
+        """Platziert die Buttonreihe im Grid-Layout des Parents (einmalig)."""
+        self._grid_kwargs = kwargs
+        self.frame.grid(**kwargs)
+
+    def show(self) -> None:
+        """Blendet die Buttonreihe ein (an der zuletzt via grid() gesetzten Position)."""
+        if self._grid_kwargs is not None:
+            self.frame.grid(**self._grid_kwargs)
+
+    def hide(self) -> None:
+        """Blendet die Buttonreihe aus, ohne die Grid-Platzierung zu vergessen."""
+        self.frame.grid_remove()
+
+    def register_target(self, entry: tk.Entry) -> None:
+        """
+        Registriert ein Entry-Feld als mögliches Einfüge-Ziel. Das zuletzt
+        fokussierte registrierte Feld empfängt Klicks auf die Buttons.
+
+        Args:
+            entry: Tk/ttk Entry-Widget, in das Zeichen eingefügt werden können
+        """
+        self._targets.append(entry)
+        if self._active_target is None:
+            self._active_target = entry
+        entry.bind('<FocusIn>', lambda e, ent=entry: setattr(self, '_active_target', ent), add='+')
+
+    # === PRIVATE METHODS ===
+
+    def _insert_character(self, char: str) -> None:
+        """Fügt das Zeichen an der aktuellen Cursor-Position des aktiven Ziels ein."""
+        entry = self._active_target
+        if entry is None:
+            return
+        pos = entry.index(tk.INSERT)
+        entry.insert(pos, char)
+        entry.icursor(pos + len(char))
+        entry.focus_set()
+
+
+# ============================================================================
 # UI MODULE: ADD/MODIFY
 # ============================================================================
 class AddModifyUI:
@@ -935,53 +1047,65 @@ class AddModifyUI:
         self.english_entry.grid(row=1, column=1, pady=5, padx=5)
         self.english_entry.bind('<Return>', lambda e: self.german_entry.focus())
 
+        # Spanish special-character row (REQ-SPCHAR-01/02) — only shown while
+        # Spanish is the active language; inserts into whichever of this
+        # bar's registered fields last had focus
+        self.add_char_bar = SpecialCharacterBar(frame)
+        self.add_char_bar.grid(row=2, column=1, sticky=tk.W, padx=5)
+        self.add_char_bar.register_target(self.english_entry)
+
         # German input
-        ttk.Label(frame, text="German Translation:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="German Translation:").grid(row=3, column=0, sticky=tk.W, pady=5)
         self.german_entry = ttk.Entry(frame, width=40)
-        self.german_entry.grid(row=2, column=1, pady=5, padx=5)
+        self.german_entry.grid(row=3, column=1, pady=5, padx=5)
         self.german_entry.bind('<Return>', lambda e: self._add_vocabulary())
 
         # Add button
         add_button = ttk.Button(frame, text="➕ Add Vocabulary",
                                command=self._add_vocabulary)
-        add_button.grid(row=3, column=0, columnspan=2, pady=20)
+        add_button.grid(row=4, column=0, columnspan=2, pady=20)
 
         # Separator
-        ttk.Separator(frame, orient='horizontal').grid(row=4, column=0, columnspan=2,
+        ttk.Separator(frame, orient='horizontal').grid(row=5, column=0, columnspan=2,
                                                        sticky='ew', pady=20)
 
         # Modify section
         modify_title = ttk.Label(frame, text="✏️ Modify Existing Vocabulary",
                                 font=('Arial', 14, 'bold'))
-        modify_title.grid(row=5, column=0, columnspan=2, pady=(0, 20))
+        modify_title.grid(row=6, column=0, columnspan=2, pady=(0, 20))
 
         # ID input for modify
-        ttk.Label(frame, text="Entry ID:").grid(row=6, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="Entry ID:").grid(row=7, column=0, sticky=tk.W, pady=5)
         self.modify_id_entry = ttk.Entry(frame, width=40)
-        self.modify_id_entry.grid(row=6, column=1, pady=5, padx=5)
+        self.modify_id_entry.grid(row=7, column=1, pady=5, padx=5)
         self.modify_id_entry.bind('<Return>', lambda e: self._load_entry())
 
         # Load button
         load_button = ttk.Button(frame, text="🔍 Load Entry",
                                 command=self._load_entry)
-        load_button.grid(row=7, column=0, columnspan=2, pady=10)
+        load_button.grid(row=8, column=0, columnspan=2, pady=10)
 
         # Modify foreign word (label text depends on active language)
         self.modify_foreign_label = ttk.Label(frame, text="New English:")
-        self.modify_foreign_label.grid(row=8, column=0, sticky=tk.W, pady=5)
+        self.modify_foreign_label.grid(row=9, column=0, sticky=tk.W, pady=5)
         self.modify_english_entry = ttk.Entry(frame, width=40)
-        self.modify_english_entry.grid(row=8, column=1, pady=5, padx=5)
+        self.modify_english_entry.grid(row=9, column=1, pady=5, padx=5)
         self.modify_english_entry.bind('<Return>', lambda e: self.modify_german_entry.focus())
 
+        # Spanish special-character row for the Modify field
+        self.modify_char_bar = SpecialCharacterBar(frame)
+        self.modify_char_bar.grid(row=10, column=1, sticky=tk.W, padx=5)
+        self.modify_char_bar.register_target(self.modify_english_entry)
+
         # Modify German
-        ttk.Label(frame, text="New German:").grid(row=9, column=0, sticky=tk.W, pady=5)
+        ttk.Label(frame, text="New German:").grid(row=11, column=0, sticky=tk.W, pady=5)
         self.modify_german_entry = ttk.Entry(frame, width=40)
-        self.modify_german_entry.grid(row=9, column=1, pady=5, padx=5)
+        self.modify_german_entry.grid(row=11, column=1, pady=5, padx=5)
         self.modify_german_entry.bind('<Return>', lambda e: self._modify_vocabulary())
 
         # Modify and Delete buttons
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=10, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=12, column=0, columnspan=2, pady=20)
 
         ttk.Button(button_frame, text="💾 Save Changes",
                   command=self._modify_vocabulary).pack(side=tk.LEFT, padx=5)
@@ -1012,10 +1136,18 @@ class AddModifyUI:
     # === PRIVATE METHODS ===
 
     def _apply_language_labels(self) -> None:
-        """Aktualisiert die Feld-Labels entsprechend der aktiven Sprache."""
+        """Aktualisiert Feld-Labels und Sonderzeichen-Leisten entsprechend der aktiven Sprache."""
         label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language.title())
         self.foreign_label.config(text=f"{label} Word:")
         self.modify_foreign_label.config(text=f"New {label}:")
+
+        # REQ-SPCHAR-01/04: nur bei aktiver Sprache Spanisch sichtbar
+        if self.active_language == 'spanish':
+            self.add_char_bar.show()
+            self.modify_char_bar.show()
+        else:
+            self.add_char_bar.hide()
+            self.modify_char_bar.hide()
 
     # === PRIVATE METHODS - Event Handlers ===
 
@@ -1216,14 +1348,20 @@ class QuizUI:
         self.answer_entry.grid(row=1, column=0, pady=10)
         self.answer_entry.bind('<Return>', lambda e: self._submit_answer())
 
+        # Spanish special-character row (REQ-SPCHAR-01/02) — only shown while
+        # a Spanish quiz is active, since the answer must be typed here
+        self.char_bar = SpecialCharacterBar(self.quiz_container)
+        self.char_bar.grid(row=2, column=0)
+        self.char_bar.register_target(self.answer_entry)
+
         # Submit button
         self.submit_button = ttk.Button(self.quiz_container, text="✅ Submit Answer",
                                        command=self._submit_answer)
-        self.submit_button.grid(row=2, column=0, pady=10)
+        self.submit_button.grid(row=3, column=0, pady=10)
 
         # Progress label
         self.progress_label = ttk.Label(self.quiz_container, text="", font=('Arial', 10))
-        self.progress_label.grid(row=3, column=0, pady=5)
+        self.progress_label.grid(row=4, column=0, pady=5)
 
         # Result text area
         self.result_text = scrolledtext.ScrolledText(frame, width=80, height=15,
@@ -1319,7 +1457,7 @@ class QuizUI:
             return
 
         entry = self.quiz_entries[self.current_index]
-        user_answer = self.answer_entry.get().strip().lower()
+        user_answer = normalize_text(self.answer_entry.get().strip().lower())  # REQ-NF-07
         correct_answer = entry['foreign_word'].lower()
 
         is_correct = user_answer == correct_answer
@@ -1424,6 +1562,8 @@ Overall Success Rate: {overall_stats['success_rate']:.1f}%
         """Zeigt Quiz-UI-Elemente."""
         self.question_label.grid()
         self.answer_entry.grid()
+        if self.active_language == 'spanish':  # REQ-SPCHAR-01/04
+            self.char_bar.show()
         self.submit_button.grid()
         self.progress_label.grid()
 
@@ -1431,6 +1571,7 @@ Overall Success Rate: {overall_stats['success_rate']:.1f}%
         """Versteckt Quiz-UI-Elemente."""
         self.question_label.grid_remove()
         self.answer_entry.grid_remove()
+        self.char_bar.hide()
         self.submit_button.grid_remove()
         self.progress_label.grid_remove()
 
@@ -1674,7 +1815,7 @@ class ListUI:
 
     def _search_vocabulary(self) -> None:
         """Sucht nach Vokabeln."""
-        search_term = self.search_entry.get().strip().lower()
+        search_term = normalize_text(self.search_entry.get().strip().lower())  # REQ-NF-07
 
         if not search_term:
             messagebox.showwarning("⚠️ Warning", "Please enter a search term")
