@@ -102,6 +102,30 @@ check(all(r[0].startswith('S') for r in rows), "all visible list rows are Spanis
 check(list_ui.title_label.cget('text') == '📜 Vocabulary List — Spanish', f"list title reflects active language (got {list_ui.title_label.cget('text')!r})")
 check(list_ui.tree.heading('English')['text'] == 'Spanish', "list column header relabeled to 'Spanish'")
 
+# === Phase 5: doublet-detection messages are language-aware, not hardcoded 'English' ===
+add_ui.english_entry.delete(0, tk.END)
+add_ui.german_entry.delete(0, tk.END)
+add_ui.english_entry.insert(0, "hola")  # duplicate of the existing Spanish "hola" entry
+add_ui.german_entry.insert(0, "hallo (dup)")
+add_ui._add_vocabulary()
+warn_calls.clear()
+list_ui._find_doublets()
+check(len(warn_calls) == 1 and 'Spanish' in warn_calls[-1][1] and 'English' not in warn_calls[-1][1],
+      f"doublet-found message names the active language, not 'English' (got {warn_calls})")
+app.db.delete_entry(app.db.get_all_entries(language='spanish')[-1]['id'])  # undo the duplicate
+
+info_calls.clear()
+list_ui._find_doublets()
+check(len(info_calls) == 1 and 'Spanish' in info_calls[-1][1] and 'English' not in info_calls[-1][1],
+      f"no-doublets message names the active language, not 'English' (got {info_calls})")
+
+# === Phase 5: Entry-ID hint example uses the active language's prefix ===
+warn_calls.clear()
+add_ui.modify_id_entry.delete(0, tk.END)
+add_ui._load_entry()
+check(len(warn_calls) == 1 and "'S3'" in warn_calls[-1][1],
+      f"empty-ID hint suggests an 'S...' example while Spanish is active (got {warn_calls})")
+
 # === Cross-language edit is rejected (AddModifyUI language guard) ===
 english_id = app.db.get_all_entries(language='english')[0]['id']
 error_calls.clear()
