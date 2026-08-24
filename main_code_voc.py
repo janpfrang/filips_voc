@@ -648,15 +648,32 @@ class VocabularyDatabase:
         """
         Migriert alte Vocabulary-Formate zum neuen Format mit Tracking-Feldern.
 
+        Bugfix (2026-08-24): IDs für Einträge ohne 'id' wurden früher anhand
+        ihrer Listenposition vergeben (entry['id'] = i + 1). Bei einer Datei,
+        in der manche Einträge bereits eine 'id' haben und andere nicht (z.B.
+        eine von Hand bearbeitete oder aus mehreren alten Exporten
+        zusammengeführte Backup-Datei), konnte das zu einer ID kollidieren,
+        die ein anderer Eintrag bereits nutzt — zwei verschiedene Vokabeln
+        landen dann effektiv auf derselben ID, wodurch delete_entry() beide
+        auf einmal löscht und get_entry_by_id()/update_entry() nur den
+        ersten Treffer sehen. Jetzt wird die nächste freie ID anhand des
+        höchsten bereits vorhandenen Integer-'id'-Werts vergeben und danach
+        für jeden weiteren migrierten Eintrag hochgezählt, damit weder mit
+        bestehenden noch mit anderen neu vergebenen IDs kollidiert wird.
+
         Returns:
             True wenn Migration durchgeführt wurde, False sonst
         """
         migrated = False
 
-        for i, entry in enumerate(self.vocabulary):
+        existing_int_ids = [entry['id'] for entry in self.vocabulary if isinstance(entry.get('id'), int)]
+        next_id = max(existing_int_ids, default=0) + 1
+
+        for entry in self.vocabulary:
             if 'id' not in entry:
                 migrated = True
-                entry['id'] = i + 1
+                entry['id'] = next_id
+                next_id += 1
 
                 if 'timestamp' in entry:
                     entry['created_at'] = entry['timestamp']
@@ -2632,15 +2649,26 @@ class VocabularyApp:
                 try:
                     import shutil
                     backup_current = Config.STORAGE_FILE + f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    if os.path.exists(Config.STORAGE_FILE):
+                    # Bugfix (2026-08-24): the success message used to claim a
+                    # safety backup was made unconditionally, even when there
+                    # was no pre-existing data file to copy (e.g. the very
+                    # first restore on a fresh install) -- only report a
+                    # backup path when one was actually written.
+                    backup_made = os.path.exists(Config.STORAGE_FILE)
+                    if backup_made:
                         shutil.copy(Config.STORAGE_FILE, backup_current)
 
                     shutil.copy(filename, Config.STORAGE_FILE)
                     self.db.load()
 
-                    messagebox.showinfo("✅ Success",
-                                       f"Data restored from:\n{filename}\n\n"
-                                       f"Previous data backed up to:\n{backup_current}")
+                    if backup_made:
+                        messagebox.showinfo("✅ Success",
+                                           f"Data restored from:\n{filename}\n\n"
+                                           f"Previous data backed up to:\n{backup_current}")
+                    else:
+                        messagebox.showinfo("✅ Success",
+                                           f"Data restored from:\n{filename}\n\n"
+                                           f"(No prior data file existed, so no safety backup was needed.)")
 
                     self.list_ui._refresh_list()
                     self.reading_ui._refresh_text_list()  # NEW
