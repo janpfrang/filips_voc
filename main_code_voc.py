@@ -64,6 +64,14 @@ class Config:
     WINDOW_WIDTH = 900
     WINDOW_HEIGHT = 700
 
+    # Sprachen (v1.1) — Anzeigename je unterstützter Sprache, zentrale Quelle
+    # für alle UI-Module (Labels, Spaltenüberschriften, Dateinamen, ...)
+    LANGUAGE_LABELS = {
+        'english': 'English',
+        'spanish': 'Spanish',
+    }
+    DEFAULT_LANGUAGE = 'english'  # REQ-LANG-06: App startet immer auf Englisch
+
 
 # ============================================================================
 # MODULE: DATABASE
@@ -883,10 +891,13 @@ class EmailModule:
 class AddModifyUI:
     """
     Add/Modify UI Module - Hinzufügen und Bearbeiten von Vokabeln
+    EXTENDED (v1.1): sprachbewusst — Feld-Labels und neu angelegte Einträge
+    folgen der aktiven Sprache (REQ-LANG-01–03).
 
     PUBLIC API:
     ===========
     - get_ui(parent) → ttk.Frame
+    - set_active_language(language: str) → None
     """
 
     def __init__(self, db: VocabularyDatabase):
@@ -897,6 +908,7 @@ class AddModifyUI:
             db: VocabularyDatabase Instanz
         """
         self.db = db
+        self.active_language = Config.DEFAULT_LANGUAGE
 
     # === PUBLIC API ===
 
@@ -916,8 +928,9 @@ class AddModifyUI:
         title = ttk.Label(frame, text="➕ Add New Vocabulary", font=('Arial', 14, 'bold'))
         title.grid(row=0, column=0, columnspan=2, pady=(0, 20))
 
-        # English input
-        ttk.Label(frame, text="English Word:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        # Foreign-word input (label text depends on active language)
+        self.foreign_label = ttk.Label(frame, text="English Word:")
+        self.foreign_label.grid(row=1, column=0, sticky=tk.W, pady=5)
         self.english_entry = ttk.Entry(frame, width=40)
         self.english_entry.grid(row=1, column=1, pady=5, padx=5)
         self.english_entry.bind('<Return>', lambda e: self.german_entry.focus())
@@ -953,8 +966,9 @@ class AddModifyUI:
                                 command=self._load_entry)
         load_button.grid(row=7, column=0, columnspan=2, pady=10)
 
-        # Modify English
-        ttk.Label(frame, text="New English:").grid(row=8, column=0, sticky=tk.W, pady=5)
+        # Modify foreign word (label text depends on active language)
+        self.modify_foreign_label = ttk.Label(frame, text="New English:")
+        self.modify_foreign_label.grid(row=8, column=0, sticky=tk.W, pady=5)
         self.modify_english_entry = ttk.Entry(frame, width=40)
         self.modify_english_entry.grid(row=8, column=1, pady=5, padx=5)
         self.modify_english_entry.bind('<Return>', lambda e: self.modify_german_entry.focus())
@@ -974,23 +988,50 @@ class AddModifyUI:
         ttk.Button(button_frame, text="🗑️ Delete Entry",
                   command=self._delete_vocabulary).pack(side=tk.LEFT, padx=5)
 
+        self._apply_language_labels()
+
         return frame
+
+    def set_active_language(self, language: str) -> None:
+        """
+        Wechselt die aktive Sprache (REQ-LANG-01/02/03).
+        Aktualisiert Feld-Labels und leert offene Eingaben, damit kein
+        halb getipptes Wort der falschen Sprache versehentlich gespeichert wird.
+
+        Args:
+            language: 'english' oder 'spanish'
+        """
+        self.active_language = language
+        self._apply_language_labels()
+        self.english_entry.delete(0, tk.END)
+        self.german_entry.delete(0, tk.END)
+        self.modify_id_entry.delete(0, tk.END)
+        self.modify_english_entry.delete(0, tk.END)
+        self.modify_german_entry.delete(0, tk.END)
+
+    # === PRIVATE METHODS ===
+
+    def _apply_language_labels(self) -> None:
+        """Aktualisiert die Feld-Labels entsprechend der aktiven Sprache."""
+        label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language.title())
+        self.foreign_label.config(text=f"{label} Word:")
+        self.modify_foreign_label.config(text=f"New {label}:")
 
     # === PRIVATE METHODS - Event Handlers ===
 
     def _add_vocabulary(self) -> None:
-        """Fügt neue Vokabel hinzu."""
-        english = self.english_entry.get().strip()
+        """Fügt neue Vokabel hinzu (in der aktuell aktiven Sprache)."""
+        foreign_word = self.english_entry.get().strip()
         german = self.german_entry.get().strip()
 
-        if not english or not german:
+        if not foreign_word or not german:
             messagebox.showwarning("⚠️ Warning", "Please fill in both fields")
             return
 
-        success, msg = self.db.add_entry(english, german)
+        success, msg = self.db.add_entry(foreign_word, german, language=self.active_language)
 
         if success:
-            messagebox.showinfo("✅ Success", f"Added: {english} → {german}")
+            messagebox.showinfo("✅ Success", f"Added: {foreign_word} → {german}")
             self.english_entry.delete(0, tk.END)
             self.german_entry.delete(0, tk.END)
             self.english_entry.focus()
@@ -998,7 +1039,7 @@ class AddModifyUI:
             messagebox.showerror("❌ Error", msg)
 
     def _load_entry(self) -> None:
-        """Lädt Eintrag zum Bearbeiten."""
+        """Lädt Eintrag zum Bearbeiten (muss zur aktiven Sprache gehören)."""
         entry_id = self.modify_id_entry.get().strip()
         if not entry_id:
             messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
@@ -1006,31 +1047,53 @@ class AddModifyUI:
 
         entry = self.db.get_entry_by_id(entry_id)
 
-        if entry:
-            self.modify_english_entry.delete(0, tk.END)
-            self.modify_english_entry.insert(0, entry['foreign_word'])
-            self.modify_german_entry.delete(0, tk.END)
-            self.modify_german_entry.insert(0, entry['german'])
-            messagebox.showinfo("✅ Loaded", f"Loaded entry #{entry_id}")
-            self.modify_english_entry.focus()
-        else:
+        if not entry:
             messagebox.showerror("❌ Error", f"Entry #{entry_id} not found")
+            return
+
+        if entry['language'] != self.active_language:
+            active_label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language)
+            entry_label = Config.LANGUAGE_LABELS.get(entry['language'], entry['language'])
+            messagebox.showerror(
+                "❌ Error",
+                f"Entry #{entry_id} belongs to {entry_label}, not {active_label}.\n\n"
+                f"Switch the active language first."
+            )
+            return
+
+        self.modify_english_entry.delete(0, tk.END)
+        self.modify_english_entry.insert(0, entry['foreign_word'])
+        self.modify_german_entry.delete(0, tk.END)
+        self.modify_german_entry.insert(0, entry['german'])
+        messagebox.showinfo("✅ Loaded", f"Loaded entry #{entry_id}")
+        self.modify_english_entry.focus()
 
     def _modify_vocabulary(self) -> None:
-        """Ändert existierenden Eintrag."""
+        """Ändert existierenden Eintrag (muss zur aktiven Sprache gehören)."""
         entry_id = self.modify_id_entry.get().strip()
-        english = self.modify_english_entry.get().strip()
+        foreign_word = self.modify_english_entry.get().strip()
         german = self.modify_german_entry.get().strip()
 
         if not entry_id:
             messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
             return
 
-        if not english or not german:
+        if not foreign_word or not german:
             messagebox.showwarning("⚠️ Warning", "Please fill in both fields")
             return
 
-        success, msg = self.db.update_entry(entry_id, english, german)
+        entry = self.db.get_entry_by_id(entry_id)
+        if entry and entry['language'] != self.active_language:
+            active_label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language)
+            entry_label = Config.LANGUAGE_LABELS.get(entry['language'], entry['language'])
+            messagebox.showerror(
+                "❌ Error",
+                f"Entry #{entry_id} belongs to {entry_label}, not {active_label}.\n\n"
+                f"Switch the active language first."
+            )
+            return
+
+        success, msg = self.db.update_entry(entry_id, foreign_word, german)
 
         if success:
             messagebox.showinfo("✅ Success", f"Modified entry #{entry_id}")
@@ -1038,10 +1101,21 @@ class AddModifyUI:
             messagebox.showerror("❌ Error", msg)
 
     def _delete_vocabulary(self) -> None:
-        """Löscht Eintrag."""
+        """Löscht Eintrag (muss zur aktiven Sprache gehören)."""
         entry_id = self.modify_id_entry.get().strip()
         if not entry_id:
             messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
+            return
+
+        entry = self.db.get_entry_by_id(entry_id)
+        if entry and entry['language'] != self.active_language:
+            active_label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language)
+            entry_label = Config.LANGUAGE_LABELS.get(entry['language'], entry['language'])
+            messagebox.showerror(
+                "❌ Error",
+                f"Entry #{entry_id} belongs to {entry_label}, not {active_label}.\n\n"
+                f"Switch the active language first."
+            )
             return
 
         confirm = messagebox.askyesno("⚠️ Confirm Delete",
@@ -1066,10 +1140,13 @@ class AddModifyUI:
 class QuizUI:
     """
     Quiz UI Module - Quiz-Funktionalität mit verschiedenen Modi
+    EXTENDED (v1.1): sprachbewusst — der Vokabel-Pool jedes Quiz-Modus ist
+    auf die aktive Sprache beschränkt (REQ-LANG-02).
 
     PUBLIC API:
     ===========
     - get_ui(parent) → ttk.Frame
+    - set_active_language(language: str) → None
     """
 
     def __init__(self, db: VocabularyDatabase,
@@ -1083,6 +1160,7 @@ class QuizUI:
         """
         self.db = db
         self.notification_callback = notification_callback
+        self.active_language = Config.DEFAULT_LANGUAGE
 
         # Quiz state
         self.quiz_entries: List[Dict] = []
@@ -1156,21 +1234,37 @@ class QuizUI:
 
         return frame
 
+    def set_active_language(self, language: str) -> None:
+        """
+        Wechselt die aktive Sprache (REQ-LANG-01/02).
+        Ein laufendes Quiz wird dabei abgebrochen, um keine Fragen aus der
+        vorherigen Sprache stehen zu lassen.
+
+        Args:
+            language: 'english' oder 'spanish'
+        """
+        self.active_language = language
+        self.quiz_entries = []
+        self.current_index = 0
+        self.quiz_results = []
+        self._hide_quiz_ui()
+        self.result_text.delete('1.0', tk.END)
+
     # === PRIVATE METHODS - Quiz Logic ===
 
     def _start_quiz(self, mode: str) -> None:
-        """Startet Quiz im gewählten Modus."""
-        self.quiz_mode = mode
+        """Startet Quiz im gewählten Modus, beschränkt auf die aktive Sprache."""
         self.current_index = 0
         self.quiz_results = []
+        language = self.active_language
 
         # Get entries based on mode
         if mode == "Last 10":
-            self.quiz_entries = self.db.get_recent_entries(10)
+            self.quiz_entries = self.db.get_recent_entries(10, language=language)
         elif mode == "Last 30":
-            self.quiz_entries = self.db.get_recent_entries(30)
+            self.quiz_entries = self.db.get_recent_entries(30, language=language)
         elif mode == "Random 30":
-            all_entries = self.db.get_all_entries()
+            all_entries = self.db.get_all_entries(language=language)
             filtered_entries = [e for e in all_entries if e.get('correct_count', 0) < 5]
 
             if len(filtered_entries) == 0:
@@ -1186,16 +1280,21 @@ class QuizUI:
             else:
                 self.quiz_entries = random.sample(filtered_entries, 30)
         elif mode == "Incorrect":
-            self.quiz_entries = self.db.get_incorrect_entries()
+            self.quiz_entries = self.db.get_incorrect_entries(language=language)
         elif mode == "Today":
             today = datetime.now().strftime("%Y-%m-%d")
-            self.quiz_entries = self.db.get_entries_by_date(today)
+            self.quiz_entries = self.db.get_entries_by_date(today, language=language)
         elif mode == "Never Tested":
-            self.quiz_entries = self.db.get_never_tested_entries()
+            self.quiz_entries = self.db.get_never_tested_entries(language=language)
 
         if not self.quiz_entries:
             messagebox.showinfo("ℹ️ Info", f"No vocabulary entries available for '{mode}' mode.")
             return
+
+        # Display name includes the active language (also flows into the
+        # quiz-result email subject via notification_callback — REQ-LANG-05)
+        language_label = Config.LANGUAGE_LABELS.get(language, language.title())
+        self.quiz_mode = f"{language_label} - {mode}"
 
         random.shuffle(self.quiz_entries)
         self._show_quiz_ui()
@@ -1284,7 +1383,7 @@ class QuizUI:
         wrong = len(self.quiz_results) - correct
         success_rate = (correct / len(self.quiz_results) * 100) if self.quiz_results else 0
 
-        overall_stats = self.db.get_statistics()
+        overall_stats = self.db.get_statistics(language=self.active_language)
 
         result_text = f"""
 {'='*60}
@@ -1342,10 +1441,13 @@ Overall Success Rate: {overall_stats['success_rate']:.1f}%
 class ListUI:
     """
     List UI Module - Anzeige und Verwaltung der Vokabelliste
+    EXTENDED (v1.1): sprachbewusst — Liste, Suche, Doublets, Statistik und
+    CSV-Export sind auf die aktive Sprache beschränkt (REQ-LANG-02/04).
 
     PUBLIC API:
     ===========
     - get_ui(parent) → ttk.Frame
+    - set_active_language(language: str) → None
     """
 
     def __init__(self, db: VocabularyDatabase):
@@ -1356,6 +1458,7 @@ class ListUI:
             db: VocabularyDatabase Instanz
         """
         self.db = db
+        self.active_language = Config.DEFAULT_LANGUAGE
 
     # === PUBLIC API ===
 
@@ -1369,8 +1472,9 @@ class ListUI:
         title_frame = ttk.Frame(frame)
         title_frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(title_frame, text="📜 Vocabulary List",
-                 font=('Arial', 14, 'bold')).pack(side=tk.LEFT)
+        self.title_label = ttk.Label(title_frame, text="📜 Vocabulary List",
+                 font=('Arial', 14, 'bold'))
+        self.title_label.pack(side=tk.LEFT)
 
         ttk.Button(title_frame, text="🔄 Refresh List",
                   command=self._refresh_list).pack(side=tk.RIGHT, padx=5)
@@ -1426,28 +1530,51 @@ class ListUI:
         self.tree.tag_configure('doublet', background='#ffcccc', foreground='#cc0000')
         self.tree.tag_configure('search_result', background='#ffffcc')
 
+        self._apply_language_labels()
         self._refresh_list()
 
         return frame
 
+    def set_active_language(self, language: str) -> None:
+        """
+        Wechselt die aktive Sprache (REQ-LANG-01/02).
+        Setzt die Suche zurück und lädt die Liste für die neue Sprache neu.
+
+        Args:
+            language: 'english' oder 'spanish'
+        """
+        self.active_language = language
+        self.search_entry.delete(0, tk.END)
+        self._apply_language_labels()
+        self._refresh_list()
+
     # === PRIVATE METHODS ===
 
+    def _apply_language_labels(self) -> None:
+        """Aktualisiert Titel und Spaltenüberschrift entsprechend der aktiven Sprache."""
+        label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language.title())
+        self.title_label.config(text=f"📜 Vocabulary List — {label}")
+        self.tree.heading('English', text=label)
+
     def _export_to_csv(self) -> None:
-        """Exportiert die Vokabeldatenbank als CSV-Datei."""
+        """Exportiert die Vokabeldatenbank der aktiven Sprache als CSV-Datei."""
         import csv
 
-        # Get all entries
-        entries = self.db.get_all_entries()
+        language = self.active_language
+        language_label = Config.LANGUAGE_LABELS.get(language, language.title())
+
+        # Get entries for the active language only (REQ-LANG-04)
+        entries = self.db.get_all_entries(language=language)
 
         if not entries:
-            messagebox.showwarning("⚠️ Warning", "No vocabulary entries to export!")
+            messagebox.showwarning("⚠️ Warning", f"No {language_label} vocabulary entries to export!")
             return
 
         # Ask for filename
         filename = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            initialfile=f"vocabulary_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            initialfile=f"vocabulary_export_{language}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         )
 
         if not filename:
@@ -1456,10 +1583,10 @@ class ListUI:
         try:
             # Write CSV file
             with open(filename, 'w', encoding='utf-8', newline='') as csvfile:
-                # Define CSV columns
+                # Define CSV columns (column header reflects the active language)
                 fieldnames = [
                     'ID',
-                    'English',
+                    language_label,
                     'German',
                     'Created At',
                     'Last Queried',
@@ -1495,7 +1622,7 @@ class ListUI:
                     # Write row
                     writer.writerow({
                         'ID': entry.get('id', ''),
-                        'English': entry.get('foreign_word', ''),
+                        language_label: entry.get('foreign_word', ''),
                         'German': entry.get('german', ''),
                         'Created At': entry.get('created_at', ''),
                         'Last Queried': entry.get('last_queried', 'Never'),
@@ -1506,18 +1633,18 @@ class ListUI:
                     })
 
             messagebox.showinfo("✅ Success",
-                              f"Exported {len(entries)} vocabulary entries to:\n\n{filename}\n\n"
+                              f"Exported {len(entries)} {language_label} vocabulary entries to:\n\n{filename}\n\n"
                               f"Format: CSV with semicolon delimiter\nEncoding: UTF-8")
 
         except Exception as e:
             messagebox.showerror("❌ Error", f"Failed to export CSV:\n\n{e}")
 
     def _refresh_list(self) -> None:
-        """Aktualisiert die Vokabelliste."""
+        """Aktualisiert die Vokabelliste (nur aktive Sprache)."""
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        entries = self.db.get_all_entries()
+        entries = self.db.get_all_entries(language=self.active_language)
 
         if not entries:
             return
@@ -1556,7 +1683,7 @@ class ListUI:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        all_entries = self.db.get_all_entries()
+        all_entries = self.db.get_all_entries(language=self.active_language)
 
         matching_entries = []
         for entry in all_entries:
@@ -1601,11 +1728,11 @@ class ListUI:
         self._refresh_list()
 
     def _show_statistics(self) -> None:
-        """Zeigt Statistik-Dialog."""
-        stats = self.db.get_statistics()
-        incorrect_count = len(self.db.get_incorrect_entries())
+        """Zeigt Statistik-Dialog (nur aktive Sprache)."""
+        stats = self.db.get_statistics(language=self.active_language)
+        incorrect_count = len(self.db.get_incorrect_entries(language=self.active_language))
 
-        entries_with_attempts = [e for e in self.db.get_all_entries()
+        entries_with_attempts = [e for e in self.db.get_all_entries(language=self.active_language)
                                 if (e.get('correct_count', 0) + e.get('wrong_count', 0)) > 0]
 
         difficult_words_text = ""
@@ -1641,8 +1768,8 @@ QUIZ PERFORMANCE:
         messagebox.showinfo("📊 Statistics", stats_text)
 
     def _find_doublets(self) -> None:
-        """Findet und markiert doppelte englische Vokabeln."""
-        all_entries = self.db.get_all_entries()
+        """Findet und markiert doppelte Vokabeln (nur aktive Sprache)."""
+        all_entries = self.db.get_all_entries(language=self.active_language)
 
         foreign_words = {}
         for entry in all_entries:
@@ -1681,10 +1808,13 @@ QUIZ PERFORMANCE:
 class ReadingUI:
     """
     Reading UI Module - Lesetexte mit Vokabel-Highlighting
+    EXTENDED (v1.1): sprachbewusst — Textliste, Hochladen und Vokabel-Matching
+    sind auf die aktive Sprache beschränkt (REQ-LANG-02/03).
 
     PUBLIC API:
     ===========
     - get_ui(parent) → ttk.Frame
+    - set_active_language(language: str) → None
     """
 
     def __init__(self, db: VocabularyDatabase):
@@ -1695,7 +1825,8 @@ class ReadingUI:
             db: VocabularyDatabase Instanz
         """
         self.db = db
-        self.current_text_id: Optional[int] = None
+        self.current_text_id: Optional[str] = None
+        self.active_language = Config.DEFAULT_LANGUAGE
 
     # === PUBLIC API ===
 
@@ -1715,8 +1846,9 @@ class ReadingUI:
         title_frame = ttk.Frame(frame)
         title_frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(title_frame, text="📖 Reading Texts",
-                 font=('Arial', 14, 'bold')).pack(side=tk.LEFT)
+        self.title_label = ttk.Label(title_frame, text="📖 Reading Texts",
+                 font=('Arial', 14, 'bold'))
+        self.title_label.pack(side=tk.LEFT)
 
         ttk.Button(title_frame, text="📤 Upload Text File",
                   command=self._upload_text).pack(side=tk.RIGHT, padx=5)
@@ -1791,11 +1923,35 @@ class ReadingUI:
         ttk.Label(legend_frame, text="= vocabulary word", font=('Arial', 9)).pack(side=tk.LEFT, padx=5)
 
         # Initial load
+        self._apply_language_labels()
         self._refresh_text_list()
 
         return frame
 
+    def set_active_language(self, language: str) -> None:
+        """
+        Wechselt die aktive Sprache (REQ-LANG-01/02).
+        Leert den Text-Viewer und lädt die Textliste für die neue Sprache neu.
+
+        Args:
+            language: 'english' oder 'spanish'
+        """
+        self.active_language = language
+        self.current_text_id = None
+        self._apply_language_labels()
+        self._refresh_text_list()
+
+        self.text_display.config(state=tk.NORMAL)
+        self.text_display.delete('1.0', tk.END)
+        self.text_display.config(state=tk.DISABLED)
+        self.info_label.config(text="")
+
     # === PRIVATE METHODS ===
+
+    def _apply_language_labels(self) -> None:
+        """Aktualisiert den Titel entsprechend der aktiven Sprache."""
+        label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language.title())
+        self.title_label.config(text=f"📖 Reading Texts — {label}")
 
     def _upload_text(self) -> None:
         """Lädt eine Text-Datei hoch."""
@@ -1866,8 +2022,9 @@ class ReadingUI:
             if not result['confirmed'] or not result['title']:
                 return
 
-            # Save to database
-            success, msg = self.db.add_reading_text(result['title'], content)
+            # Save to database (tagged with the active language)
+            success, msg = self.db.add_reading_text(result['title'], content,
+                                                     language=self.active_language)
 
             if success:
                 messagebox.showinfo("✅ Success",
@@ -1881,10 +2038,10 @@ class ReadingUI:
             messagebox.showerror("❌ Error", f"Failed to read file:\n{e}")
 
     def _refresh_text_list(self) -> None:
-        """Aktualisiert die Liste der Texte."""
+        """Aktualisiert die Liste der Texte (nur aktive Sprache)."""
         self.text_listbox.delete(0, tk.END)
 
-        texts = self.db.get_all_reading_texts()
+        texts = self.db.get_all_reading_texts(language=self.active_language)
 
         if not texts:
             self.text_listbox.insert(tk.END, "No texts uploaded yet")
@@ -1898,12 +2055,17 @@ class ReadingUI:
             self.text_listbox.insert(tk.END, display_text)
 
     def _on_text_selected(self, event) -> None:
-        """Wird aufgerufen wenn ein Text in der Liste ausgewählt wird."""
+        """
+        Wird aufgerufen wenn ein Text in der Liste ausgewählt wird.
+        Muss dieselbe sprachgefilterte + sortierte Liste verwenden wie
+        _refresh_text_list(), sonst zeigt die Listbox-Auswahl (Index) auf
+        den falschen Text, sobald Texte beider Sprachen existieren.
+        """
         selection = self.text_listbox.curselection()
         if not selection:
             return
 
-        texts = self.db.get_all_reading_texts()
+        texts = self.db.get_all_reading_texts(language=self.active_language)
         if not texts or selection[0] >= len(texts):
             return
 
@@ -1932,8 +2094,10 @@ class ReadingUI:
         content = text_data['content']
         self.text_display.insert('1.0', content)
 
-        # Find and highlight vocabulary
-        matches = self.db.find_vocabulary_in_text(content)
+        # Find and highlight vocabulary (scoped to the text's own language,
+        # which matches the active language since the list itself is filtered)
+        matches = self.db.find_vocabulary_in_text(
+            content, language=text_data.get('language', self.active_language))
 
         # Apply highlighting
         for match in matches:
@@ -1988,8 +2152,8 @@ class ReadingUI:
             messagebox.showerror("❌ Error", f"Failed to delete text:\n{msg}")
 
     def _show_reading_statistics(self) -> None:
-        """Zeigt Reading-Statistiken."""
-        stats = self.db.get_reading_statistics()
+        """Zeigt Reading-Statistiken (nur aktive Sprache)."""
+        stats = self.db.get_reading_statistics(language=self.active_language)
 
         stats_text = f"""
 📊 READING STATISTICS
@@ -2148,6 +2312,8 @@ class SettingsUI:
 class VocabularyApp:
     """
     Main Application - Koordiniert alle Module
+    EXTENDED (v1.1): hält den globalen "active_language"-Zustand (REQ-LANG-01)
+    und propagiert Sprachwechsel an alle sprachbewussten Tabs (REQ-LANG-02).
 
     Dependency Graph:
     ─────────────────
@@ -2169,8 +2335,10 @@ class VocabularyApp:
             root: Tkinter root window
         """
         self.root = root
+        self.active_language = Config.DEFAULT_LANGUAGE  # REQ-LANG-06: startet auf Englisch
         self._setup_window()
         self._initialize_modules()
+        self._create_language_switcher()
         self._create_ui()
         self._create_menu()
 
@@ -2216,6 +2384,47 @@ class VocabularyApp:
         print(f"📚 {Config.APP_NAME} v{Config.VERSION} Initialized")
         print(f"   {message}")
         print(f"   Storage: {Config.STORAGE_FILE}")
+
+    def _create_language_switcher(self) -> None:
+        """
+        Erstellt den Sprachumschalter (REQ-LANG-01).
+        Sitzt oberhalb der Tabs und ist jederzeit umschaltbar, nicht nur beim
+        Start der App. Verwendet Radiobuttons im 'Toolbutton'-Stil, damit die
+        aktive Sprache optisch als gedrückt erscheint.
+        """
+        frame = ttk.Frame(self.root, padding=(10, 10, 10, 0))
+        frame.pack(fill=tk.X, side=tk.TOP)
+
+        ttk.Label(frame, text="Language:", font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.language_var = tk.StringVar(value=self.active_language)
+        for language in ('english', 'spanish'):
+            label = Config.LANGUAGE_LABELS[language]
+            ttk.Radiobutton(
+                frame, text=label, value=language, variable=self.language_var,
+                style='Toolbutton', command=lambda l=language: self._set_active_language(l)
+            ).pack(side=tk.LEFT, padx=2)
+
+    def _set_active_language(self, language: str) -> None:
+        """
+        Wechselt die aktive Sprache der gesamten App und propagiert den
+        Wechsel an jeden Tab (REQ-LANG-01/02). Es gibt bewusst keine
+        kombinierte "alle Sprachen"-Ansicht — jede Sprache verhält sich wie
+        ein unabhängiger Vokabeltrainer, der sich nur die Datei teilt.
+
+        Args:
+            language: 'english' oder 'spanish'
+        """
+        if language == self.active_language:
+            return
+
+        self.active_language = language
+        self.language_var.set(language)
+
+        self.add_modify_ui.set_active_language(language)
+        self.quiz_ui.set_active_language(language)
+        self.list_ui.set_active_language(language)
+        self.reading_ui.set_active_language(language)
 
     def _create_ui(self) -> None:
         """Erstellt die Benutzeroberfläche mit Tabs."""
