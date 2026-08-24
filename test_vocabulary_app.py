@@ -3,7 +3,8 @@ import unittest
 import tempfile
 import os
 import json
-from main_code_voc import VocabularyDatabase
+import unicodedata
+from main_code_voc import VocabularyDatabase, normalize_text
 
 
 class TestVocabularyDatabase(unittest.TestCase):
@@ -282,6 +283,49 @@ class TestVocabularyDatabase(unittest.TestCase):
             self.assertIn('language', saved['vocabulary'][0])
         finally:
             os.remove(legacy_file.name)
+
+    # === v1.1: Unicode NFC normalization (REQ-NF-07) ===
+
+    def test_normalize_text_converts_nfd_to_nfc(self):
+        """Test: normalize_text() wandelt NFD-Text (Basiszeichen + Kombinationszeichen) in NFC um"""
+        nfd_cafe = unicodedata.normalize('NFD', 'café')
+        self.assertNotEqual(nfd_cafe, 'café', "Sanity check: NFD-Form ist eine andere Byte-Sequenz als NFC")
+
+        result = normalize_text(nfd_cafe)
+
+        self.assertEqual(result, unicodedata.normalize('NFC', 'café'))
+        self.assertEqual(result, 'café')
+
+    def test_normalize_text_leaves_nfc_unchanged(self):
+        """Test: normalize_text() lässt bereits NFC-normalisierten Text unverändert"""
+        self.assertEqual(normalize_text('café'), 'café')
+        self.assertEqual(normalize_text('hello'), 'hello')
+
+    def test_add_entry_normalizes_nfd_input(self):
+        """Test: add_entry() speichert NFD-Eingabe als NFC (foreign_word und german)"""
+        nfd_cafe = unicodedata.normalize('NFD', 'café')
+        nfd_tschuess = unicodedata.normalize('NFD', 'tschüss')
+
+        success, msg = self.db.add_entry(nfd_cafe, nfd_tschuess, language="spanish")
+
+        self.assertTrue(success)
+        entry = self.db.get_all_entries()[0]
+        self.assertEqual(entry['foreign_word'], unicodedata.normalize('NFC', 'café'))
+        self.assertEqual(entry['german'], unicodedata.normalize('NFC', 'tschüss'))
+        # stored bytes must match NFC, not the original NFD input
+        self.assertNotEqual(entry['foreign_word'], nfd_cafe)
+
+    def test_update_entry_normalizes_nfd_input(self):
+        """Test: update_entry() normalisiert NFD-Eingabe beim Bearbeiten ebenfalls auf NFC"""
+        self.db.add_entry("hola", "hallo", language="spanish")
+        entry_id = self.db.get_all_entries()[0]['id']
+
+        nfd_cafe = unicodedata.normalize('NFD', 'café')
+        success, msg = self.db.update_entry(entry_id, foreign_word=nfd_cafe)
+
+        self.assertTrue(success)
+        updated = self.db.get_entry_by_id(entry_id)
+        self.assertEqual(updated['foreign_word'], unicodedata.normalize('NFC', 'café'))
 
 
 if __name__ == '__main__':
