@@ -80,7 +80,7 @@ class Config:
     SMTP_PORT = 587
 
     # App-Version
-    VERSION = "2.61"
+    VERSION = "2.7"
     APP_NAME = "Filip's English Vocabulary Learning App"
 
     # UI-Einstellungen
@@ -899,7 +899,7 @@ class EmailModule:
                 </div>
 
                 <div class="footer">
-                    <p><em>Keep up the great work learning English vocabulary! 🎯</em></p>
+                    <p><em>Keep up the great work! 🎯</em></p>
                     <p>Sent from {Config.APP_NAME} v{Config.VERSION}</p>
                 </div>
             </div>
@@ -1174,7 +1174,7 @@ class AddModifyUI:
         """Lädt Eintrag zum Bearbeiten (muss zur aktiven Sprache gehören)."""
         entry_id = self.modify_id_entry.get().strip()
         if not entry_id:
-            messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
+            messagebox.showwarning("⚠️ Warning", f"Please enter an Entry ID (e.g. '{self.db.LANGUAGE_PREFIXES.get(self.active_language, 'E')}3')")
             return
 
         entry = self.db.get_entry_by_id(entry_id)
@@ -1207,7 +1207,7 @@ class AddModifyUI:
         german = self.modify_german_entry.get().strip()
 
         if not entry_id:
-            messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
+            messagebox.showwarning("⚠️ Warning", f"Please enter an Entry ID (e.g. '{self.db.LANGUAGE_PREFIXES.get(self.active_language, 'E')}3')")
             return
 
         if not foreign_word or not german:
@@ -1236,7 +1236,7 @@ class AddModifyUI:
         """Löscht Eintrag (muss zur aktiven Sprache gehören)."""
         entry_id = self.modify_id_entry.get().strip()
         if not entry_id:
-            messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
+            messagebox.showwarning("⚠️ Warning", f"Please enter an Entry ID (e.g. '{self.db.LANGUAGE_PREFIXES.get(self.active_language, 'E')}3')")
             return
 
         entry = self.db.get_entry_by_id(entry_id)
@@ -1934,14 +1934,16 @@ QUIZ PERFORMANCE:
                 if values and values[0] in doublet_ids:
                     self.tree.item(item, tags=('doublet',))
 
+            language_label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language.title())
             doublet_info = "\n".join([f"  • '{word}' ({len(ids)}x): IDs {', '.join(map(str, ids))}"
                                       for word, ids in sorted(doublets.items())])
             messagebox.showwarning("🔍 Doublets Found",
-                                 f"Found {len(doublets)} duplicate English word(s):\n\n{doublet_info}\n\n"
+                                 f"Found {len(doublets)} duplicate {language_label} word(s):\n\n{doublet_info}\n\n"
                                  f"Highlighted {len(doublet_ids)} entries in red.")
         else:
+            language_label = Config.LANGUAGE_LABELS.get(self.active_language, self.active_language.title())
             messagebox.showinfo("✅ No Doublets",
-                              "No duplicate English words found!\nAll vocabulary entries are unique.")
+                              f"No duplicate {language_label} words found!\nAll vocabulary entries are unique.")
 
 # ============================================================================
 # UI MODULE: READING (NEW)
@@ -2650,17 +2652,19 @@ class VocabularyApp:
         about_text = f"""
 📚 {Config.APP_NAME}
 
-Version: {Config.VERSION} (Reading Module Added)
+Version: {Config.VERSION} (Spanish Module Added)
 Platform: Windows
 
 Features:
   • Modular architecture with clear separation
+  • English and Spanish vocabulary tracks, switchable anytime (NEW)
+  • On-screen Spanish special characters (á é í ó ú ñ Ñ ¿ ¡) (NEW)
   • Add, modify, and delete vocabulary
   • Search in vocabulary database
   • Six quiz modes with smart filtering
-  • Reading texts with vocabulary highlighting (NEW)
-  • Upload text files for reading practice (NEW)
-  • Automatic vocabulary detection in texts (NEW)
+  • Reading texts with vocabulary highlighting
+  • Upload text files for reading practice
+  • Automatic vocabulary detection in texts
   • Detailed statistics and tracking
   • Email notifications after each quiz
   • Automatic data backup
