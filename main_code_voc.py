@@ -999,63 +999,65 @@ class AddModifyUI:
 
     def _load_entry(self) -> None:
         """Lädt Eintrag zum Bearbeiten."""
-        try:
-            entry_id = int(self.modify_id_entry.get().strip())
-            entry = self.db.get_entry_by_id(entry_id)
+        entry_id = self.modify_id_entry.get().strip()
+        if not entry_id:
+            messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
+            return
 
-            if entry:
-                self.modify_english_entry.delete(0, tk.END)
-                self.modify_english_entry.insert(0, entry['english'])
-                self.modify_german_entry.delete(0, tk.END)
-                self.modify_german_entry.insert(0, entry['german'])
-                messagebox.showinfo("✅ Loaded", f"Loaded entry #{entry_id}")
-                self.modify_english_entry.focus()
-            else:
-                messagebox.showerror("❌ Error", f"Entry #{entry_id} not found")
-        except ValueError:
-            messagebox.showwarning("⚠️ Warning", "Please enter a valid ID number")
+        entry = self.db.get_entry_by_id(entry_id)
+
+        if entry:
+            self.modify_english_entry.delete(0, tk.END)
+            self.modify_english_entry.insert(0, entry['foreign_word'])
+            self.modify_german_entry.delete(0, tk.END)
+            self.modify_german_entry.insert(0, entry['german'])
+            messagebox.showinfo("✅ Loaded", f"Loaded entry #{entry_id}")
+            self.modify_english_entry.focus()
+        else:
+            messagebox.showerror("❌ Error", f"Entry #{entry_id} not found")
 
     def _modify_vocabulary(self) -> None:
         """Ändert existierenden Eintrag."""
-        try:
-            entry_id = int(self.modify_id_entry.get().strip())
-            english = self.modify_english_entry.get().strip()
-            german = self.modify_german_entry.get().strip()
+        entry_id = self.modify_id_entry.get().strip()
+        english = self.modify_english_entry.get().strip()
+        german = self.modify_german_entry.get().strip()
 
-            if not english or not german:
-                messagebox.showwarning("⚠️ Warning", "Please fill in both fields")
-                return
+        if not entry_id:
+            messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
+            return
 
-            success, msg = self.db.update_entry(entry_id, english, german)
+        if not english or not german:
+            messagebox.showwarning("⚠️ Warning", "Please fill in both fields")
+            return
 
-            if success:
-                messagebox.showinfo("✅ Success", f"Modified entry #{entry_id}")
-            else:
-                messagebox.showerror("❌ Error", msg)
-        except ValueError:
-            messagebox.showwarning("⚠️ Warning", "Please enter a valid ID number")
+        success, msg = self.db.update_entry(entry_id, english, german)
+
+        if success:
+            messagebox.showinfo("✅ Success", f"Modified entry #{entry_id}")
+        else:
+            messagebox.showerror("❌ Error", msg)
 
     def _delete_vocabulary(self) -> None:
         """Löscht Eintrag."""
-        try:
-            entry_id = int(self.modify_id_entry.get().strip())
+        entry_id = self.modify_id_entry.get().strip()
+        if not entry_id:
+            messagebox.showwarning("⚠️ Warning", "Please enter an Entry ID (e.g. 'E3')")
+            return
 
-            confirm = messagebox.askyesno("⚠️ Confirm Delete",
-                                         f"Are you sure you want to delete entry #{entry_id}?")
-            if not confirm:
-                return
+        confirm = messagebox.askyesno("⚠️ Confirm Delete",
+                                     f"Are you sure you want to delete entry #{entry_id}?")
+        if not confirm:
+            return
 
-            success, msg = self.db.delete_entry(entry_id)
+        success, msg = self.db.delete_entry(entry_id)
 
-            if success:
-                messagebox.showinfo("✅ Success", f"Deleted entry #{entry_id}")
-                self.modify_id_entry.delete(0, tk.END)
-                self.modify_english_entry.delete(0, tk.END)
-                self.modify_german_entry.delete(0, tk.END)
-            else:
-                messagebox.showerror("❌ Error", msg)
-        except ValueError:
-            messagebox.showwarning("⚠️ Warning", "Please enter a valid ID number")
+        if success:
+            messagebox.showinfo("✅ Success", f"Deleted entry #{entry_id}")
+            self.modify_id_entry.delete(0, tk.END)
+            self.modify_english_entry.delete(0, tk.END)
+            self.modify_german_entry.delete(0, tk.END)
+        else:
+            messagebox.showerror("❌ Error", msg)
 
 
 # ============================================================================
@@ -1219,7 +1221,7 @@ class QuizUI:
 
         entry = self.quiz_entries[self.current_index]
         user_answer = self.answer_entry.get().strip().lower()
-        correct_answer = entry['english'].lower()
+        correct_answer = entry['foreign_word'].lower()
 
         is_correct = user_answer == correct_answer
         self.quiz_results.append(is_correct)
@@ -1228,11 +1230,11 @@ class QuizUI:
 
         if is_correct:
             self._show_large_message("✅ Correct!",
-                                    f"'{entry['english']}' is correct!",
+                                    f"'{entry['foreign_word']}' is correct!",
                                     "green")
         else:
             self._show_large_message("❌ Wrong",
-                                    f"Correct answer: '{entry['english']}'\n\nYour answer: '{user_answer}'",
+                                    f"Correct answer: '{entry['foreign_word']}'\n\nYour answer: '{user_answer}'",
                                     "red")
 
         self.current_index += 1
@@ -1472,8 +1474,9 @@ class ListUI:
                 # Write header
                 writer.writeheader()
 
-                # Write data
-                for entry in sorted(entries, key=lambda x: x.get('id', 0)):
+                # Write data (chronological order; IDs are prefixed strings and
+                # don't sort correctly as plain text, so sort by creation time instead)
+                for entry in sorted(entries, key=lambda x: x.get('created_at', '')):
                     # Calculate success rate
                     correct = entry.get('correct_count', 0)
                     wrong = entry.get('wrong_count', 0)
@@ -1492,7 +1495,7 @@ class ListUI:
                     # Write row
                     writer.writerow({
                         'ID': entry.get('id', ''),
-                        'English': entry.get('english', ''),
+                        'English': entry.get('foreign_word', ''),
                         'German': entry.get('german', ''),
                         'Created At': entry.get('created_at', ''),
                         'Last Queried': entry.get('last_queried', 'Never'),
@@ -1519,7 +1522,9 @@ class ListUI:
         if not entries:
             return
 
-        entries_sorted = sorted(entries, key=lambda x: x.get('id', 0), reverse=True)
+        # IDs are prefixed strings and don't sort correctly as plain text
+        # ("E10" < "E2" lexicographically), so use creation time for "newest first" instead
+        entries_sorted = sorted(entries, key=lambda x: x.get('created_at', ''), reverse=True)
 
         for entry in entries_sorted:
             last_result = "✅" if entry.get('last_result') == True else \
@@ -1533,7 +1538,7 @@ class ListUI:
 
             self.tree.insert('', tk.END, values=(
                 entry.get('id'),
-                entry['english'],
+                entry['foreign_word'],
                 entry['german'],
                 last_result,
                 last_quiz,
@@ -1555,10 +1560,10 @@ class ListUI:
 
         matching_entries = []
         for entry in all_entries:
-            english = entry['english'].lower()
+            foreign_word = entry['foreign_word'].lower()
             german = entry['german'].lower()
 
-            if search_term in english or search_term in german:
+            if search_term in foreign_word or search_term in german:
                 matching_entries.append(entry)
 
         if not matching_entries:
@@ -1566,7 +1571,7 @@ class ListUI:
                               f"No vocabulary found matching '{search_term}'")
             return
 
-        matching_entries_sorted = sorted(matching_entries, key=lambda x: x.get('id', 0), reverse=True)
+        matching_entries_sorted = sorted(matching_entries, key=lambda x: x.get('created_at', ''), reverse=True)
 
         for entry in matching_entries_sorted:
             last_result = "✅" if entry.get('last_result') == True else \
@@ -1580,7 +1585,7 @@ class ListUI:
 
             item_id = self.tree.insert('', tk.END, values=(
                 entry.get('id'),
-                entry['english'],
+                entry['foreign_word'],
                 entry['german'],
                 last_result,
                 last_quiz,
@@ -1614,7 +1619,7 @@ class ListUI:
                 total = entry.get('correct_count', 0) + entry.get('wrong_count', 0)
                 error_rate = entry.get('wrong_count', 0) / total * 100
                 last_icon = "✅" if entry.get('last_result') else "❌" if entry.get('last_result') is False else "➖"
-                difficult_words_text += f"  {last_icon} {entry['english']}/{entry['german']}: {error_rate:.0f}% errors ({entry.get('wrong_count', 0)}/{total})\n"
+                difficult_words_text += f"  {last_icon} {entry['foreign_word']}/{entry['german']}: {error_rate:.0f}% errors ({entry.get('wrong_count', 0)}/{total})\n"
 
         stats_text = f"""
 📊 VOCABULARY STATISTICS
@@ -1639,14 +1644,14 @@ QUIZ PERFORMANCE:
         """Findet und markiert doppelte englische Vokabeln."""
         all_entries = self.db.get_all_entries()
 
-        english_words = {}
+        foreign_words = {}
         for entry in all_entries:
-            english = entry['english'].lower().strip()
-            if english not in english_words:
-                english_words[english] = []
-            english_words[english].append(entry['id'])
+            foreign_word = entry['foreign_word'].lower().strip()
+            if foreign_word not in foreign_words:
+                foreign_words[foreign_word] = []
+            foreign_words[foreign_word].append(entry['id'])
 
-        doublets = {word: ids for word, ids in english_words.items() if len(ids) > 1}
+        doublets = {word: ids for word, ids in foreign_words.items() if len(ids) > 1}
         doublet_ids = set()
         for ids in doublets.values():
             doublet_ids.update(ids)
@@ -1656,7 +1661,9 @@ QUIZ PERFORMANCE:
         if doublet_ids:
             for item in self.tree.get_children():
                 values = self.tree.item(item, 'values')
-                if values and int(values[0]) in doublet_ids:
+                # IDs are strings (e.g. 'E5') — Tkinter Treeview already returns
+                # them as strings, so compare directly, no int() conversion
+                if values and values[0] in doublet_ids:
                     self.tree.item(item, tags=('doublet',))
 
             doublet_info = "\n".join([f"  • '{word}' ({len(ids)}x): IDs {', '.join(map(str, ids))}"
