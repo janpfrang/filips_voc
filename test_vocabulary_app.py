@@ -284,6 +284,53 @@ class TestVocabularyDatabase(unittest.TestCase):
         finally:
             os.remove(legacy_file.name)
 
+    def test_migration_assigns_distinct_ids_when_some_entries_lack_id(self):
+        """
+        Bugfix (2026-08-24): _migrate_old_format() used to assign a missing
+        'id' based on an entry's position in the list (i + 1), which could
+        collide with an 'id' another entry already had. Now it must pick IDs
+        that don't collide with any existing or newly-assigned ID.
+        """
+        legacy_data = {
+            "vocabulary": [
+                {
+                    "id": 2,  # deliberately not 1, and deliberately collides
+                              # with the position-based scheme's old output
+                    "english": "existing",
+                    "german": "vorhanden",
+                    "created_at": "2020-01-01 10:00:00",
+                    "last_queried": None,
+                    "last_result": None,
+                    "correct_count": 0,
+                    "wrong_count": 0
+                },
+                {"english": "missing_id_one", "german": "eins"},  # no 'id' at all
+                {"english": "missing_id_two", "german": "zwei"},  # no 'id' at all
+            ],
+            "reading_texts": []
+        }
+
+        legacy_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
+        json.dump(legacy_data, legacy_file)
+        legacy_file.close()
+
+        try:
+            migrated_db = VocabularyDatabase(legacy_file.name)
+            entries = migrated_db.get_all_entries()
+            ids = [e['id'] for e in entries]
+
+            self.assertEqual(len(ids), len(set(ids)), f"migrated IDs must be unique, got {ids}")
+            self.assertEqual(len(entries), 3)
+
+            # each word must still be independently reachable/deletable by its own ID
+            for word in ('existing', 'missing_id_one', 'missing_id_two'):
+                matching = [e for e in entries if e['foreign_word'] == word]
+                self.assertEqual(len(matching), 1)
+                fetched = migrated_db.get_entry_by_id(matching[0]['id'])
+                self.assertEqual(fetched['foreign_word'], word)
+        finally:
+            os.remove(legacy_file.name)
+
     # === v1.1: Unicode NFC normalization (REQ-NF-07) ===
 
     def test_normalize_text_converts_nfd_to_nfc(self):
