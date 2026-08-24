@@ -1,8 +1,8 @@
 # Filip's Vocabulary App — Requirements & Architecture Baseline
 
-**Document version:** 1.2
+**Document version:** 1.3
 **Date:** 2026-08-24
-**Source:** v1.0 reverse-engineered from `main_code_voc.py` (App version 2.61); v1.1 added the Spanish module requirements and the architecture changes needed to support it; v1.2 marks all six implementation phases complete and verified (App version now 2.7).
+**Source:** v1.0 reverse-engineered from `main_code_voc.py` (App version 2.61); v1.1 added the Spanish module requirements and the architecture changes needed to support it; v1.2 marks all six implementation phases complete and verified (App version now 2.7); v1.3 fixes two pre-existing (non-Spanish) bugs found in a full post-implementation code review.
 
 ## 1. Purpose
 
@@ -192,6 +192,16 @@ Staged rather than a single change, so each layer can be verified (ideally via t
 
 No app-code changes were needed in this phase — Phase 6 was pure verification, and it passed. All six implementation phases from Section 12 are now complete. The Spanish vocabulary module (multi-language data model, active-language switching, Spanish special-character input, Unicode normalization) is fully implemented, tested, and considered production-ready pending only two still-open, non-blocking items: the `Config.APP_NAME` branding question above, and wiring the Xvfb smoke tests into CI (`python_ci.yml` still has no display).
 
+## 12a. Post-Implementation Code Review (2026-08-24)
+
+A full line-by-line review of `main_code_voc.py` was done after Phase 6, independent of the Spanish-module work — looking for latent bugs anywhere in the file, not just in the new code. Three real issues were found and verified with direct reproductions; two have been fixed, one is logged as a known limitation.
+
+**Fixed — legacy-migration ID collision (`_migrate_old_format`).** IDs for vocabulary entries missing an `id` field used to be assigned from the entry's position in the list (`entry['id'] = i + 1`), with no check against IDs other entries already had. A backup file where some entries have an `id` and others don't (e.g. hand-edited, or merged from two old exports) could produce two different entries sharing one ID. Confirmed impact: `delete_entry()` on the shared ID deleted *both* entries at once, and `get_entry_by_id()`/`update_entry()` only ever saw the first of the two. Fixed by computing the next free ID from the highest existing integer `id` and incrementing it for each newly-assigned entry, so it can no longer collide with an existing ID or with another entry migrated in the same pass. Covered by a new test, `test_migration_assigns_distinct_ids_when_some_entries_lack_id` in `test_vocabulary_app.py`.
+
+**Fixed — misleading Restore confirmation message (`VocabularyApp._restore_data`).** The success dialog after a menu-driven Restore always said "Previous data backed up to: `<path>`", even when no prior data file existed to copy (e.g. the very first restore on a fresh install) — in that case the named file was never actually created. Fixed by only showing the "backed up to" line when a safety-backup copy was genuinely made; otherwise the dialog now says no backup was needed. Covered by two new assertions in `smoke_test_phase6_regression.py`, one for each case (no backup made / backup made).
+
+**Known limitation, not fixed — Unicode normalization (REQ-NF-07) is not retroactive.** `add_entry`/`update_entry` normalize text to NFC on every write, but the schema migration that runs on load does not re-normalize the `foreign_word`/`german` text of entries that already existed in the file. Confirmed effect: an entry whose text was stored in a different (but visually identical) Unicode form before this update — e.g. from an unusual input source — is not automatically fixed on load, and Find Doublets will not recognize it as a duplicate of a newly-typed, NFC-stored version of the same word until that entry is edited and re-saved once. Real-world risk is low (normal keyboard input on Windows/German layouts produces NFC directly), so this was left as-is rather than adding a one-time full-database re-normalization pass; flag if you'd like that pass added.
+
 ## 13. Change Log
 
 | Version | Date | Change |
@@ -200,3 +210,4 @@ No app-code changes were needed in this phase — Phase 6 was pure verification,
 | 1.1 | 2026-08-24 | Added Spanish vocabulary module requirements: language-scoped UI switching, generalized data model (`foreign_word` + `language` field), prefixed per-language IDs, Spanish special-character input widget, migration requirements for existing data, staged implementation plan. |
 | 1.1 (impl.) | 2026-08-24 | Phases 1–5 implemented and verified: data-layer schema/migration (Phase 1), UI re-pointed to new schema (Phase 2), active-language state + toggle scoping every tab incl. CSV/email labeling (Phase 3), Spanish special-character input widget + Unicode NFC normalization (Phase 4), final polish pass fixing three remaining English-hardcoded strings and refreshing the About dialog/version (Phase 5). 22/22 automated tests plus three headless Xvfb smoke test scripts all pass. Phase 6 (end-to-end regression pass) remains open. |
 | 1.2 | 2026-08-24 | Phase 6 (final regression pass) complete: full menu-driven restore of a pre-migration backup verified end-to-end, plus a new continuous mixed-language smoke test (`smoke_test_phase6_regression.py`) exercising both tracks together and a backup/mutate/restore round-trip. No app-code changes needed — all checks passed on the first fix (one test-assertion correction). **All six implementation phases are now complete; the Spanish module is considered done.** Two non-blocking open items remain: `Config.APP_NAME` branding, and wiring the Xvfb smoke tests into CI. |
+| 1.3 | 2026-08-24 | Post-implementation code review (Section 12a) found and fixed two pre-existing, non-Spanish bugs: a legacy-migration ID collision that could make `delete_entry()` silently delete two different vocabulary entries at once, and a Restore confirmation dialog that could falsely claim a safety backup was made. A third finding (Unicode normalization isn't retroactively applied to pre-existing data) was logged as a known, low-risk limitation rather than fixed. 23/23 pytest tests (1 new) and all four smoke tests (2 new assertions) pass. |
