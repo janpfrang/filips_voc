@@ -134,6 +134,12 @@ app._restore_data()
 
 check(len(error_calls) == 0, f"restoring a legacy backup through the menu flow raised no error (got {error_calls})")
 check(len(info_calls) == 1 and 'restored' in info_calls[-1][1].lower(), "restore success dialog shown")
+# Bugfix (2026-08-24): the dialog used to unconditionally claim "Previous
+# data backed up to: <path>" even when no prior file existed to back up.
+# This is the very first restore in this test (fresh install, no prior
+# STORAGE_FILE) -- the message must NOT claim a backup was made.
+check('backed up to' not in info_calls[-1][1].lower(),
+      f"restore dialog does not falsely claim a safety backup when none was made (got {info_calls[-1][1]!r})")
 
 restored_entries = app.db.get_all_entries()
 check(len(restored_entries) == 2, f"both legacy entries present after restore (got {len(restored_entries)})")
@@ -291,6 +297,9 @@ check(len(app.db.get_all_reading_texts()) == 3, "all 3 reading texts (across bot
 safety_backups_after_second_restore = [fn for fn in os.listdir(tmpdir) if fn.startswith('vocabulary_data.json.backup_')]
 check(len(safety_backups_after_second_restore) >= 1,
       f"a safety backup of the pre-restore (mutated) data was created this time (got {safety_backups_after_second_restore})")
+# ...and this time the dialog SHOULD claim a backup was made, since one genuinely was.
+check(len(info_calls) == 1 and 'backed up to' in info_calls[-1][1].lower(),
+      f"restore dialog correctly claims a safety backup when one was actually made (got {info_calls})")
 
 root.destroy()
 
